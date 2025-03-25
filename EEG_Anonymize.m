@@ -1,106 +1,145 @@
-clear all
-close all
-clc
+function processEEGData(main_folder)
+% PROCESSEDGDATA - Anonymizes and processes EEG data from EDF files
+%
+% Inputs:
+%   main_folder - Path to directory containing EDF files
+%
+% Outputs:
+%   Saves anonymized EDF files and processing logs in original folders
+%
+% Example:
+%   processEEGData('C:/EEG_Data/')
 
-% Make sure EEGLAB is installed and added to your MATLAB path
-eeglab; % Start EEGLAB
+%% Initialization
+clc; close all; clearvars -except main_folder;
 
-% Define the main folder path
-main_folder = 'C:/Users/...'; % Main directory with EDF+ files
-
-% Get a list of all .edf and .EDF files in the main folder and its subfolders
-edf_files = dir(fullfile(main_folder, '**', '*.edf'));
-
-% Loop through each EDF file found
-for i = 1:length(edf_files)
-    % Get the folder path where the current EDF file is located
-    file_folder = edf_files(i).folder;
-    % Get the full path of the current EDF file
-    input_file = fullfile(file_folder, edf_files(i).name);
-    
-    % Extract the file name without the extension for later use
-    [~, name, ~] = fileparts(edf_files(i).name);
-    
-    % Extract the folder name from the file path
-    [~, folder_name] = fileparts(file_folder);
-    
-    % Load the EDF file using EEGLAB's biosig function
-    EEG = pop_biosig(input_file);
-    
-    % Get the number of channels and channel labels/types before processing
-    num_channels_before = EEG.nbchan;
-    channel_labels_before = {EEG.chanlocs.labels};
-    channel_types_before = {EEG.chanlocs.type}; % Some may be empty initially
-
-    % Save the information before processing in a .txt file
-    info_file_txt_before = fullfile(file_folder, [folder_name '_' name '_before_processing_info.txt']);
-    fileID = fopen(info_file_txt_before, 'w');
-    fprintf(fileID, 'Number of channels (before processing): %d\n', num_channels_before);
-    fprintf(fileID, 'Channel labels and types (before processing):\n');
-    for j = 1:num_channels_before
-        if isempty(channel_types_before{j})
-            channel_types_before{j} = 'Unknown'; % Assign 'Unknown' if no type is present
-        end
-        fprintf(fileID, 'Channel %d: %s - %s\n', j, channel_labels_before{j}, channel_types_before{j});
-    end
-    fclose(fileID);
-    % 
-    % Modify the header to remove personal information (anonymize)
-    EEG.subject = 'Anonymous';         % Replace subject name
-    EEG.comments = 'Anonymized data';  % Optional: add comments
-    EEG.history = [];                  % Remove history if any (optional)
-    
-    % Iterate over each channel and set its type based on the label
-    for chan = 1:EEG.nbchan
-        % Retrieve the current channel label
-        chan_label = EEG.chanlocs(chan).labels;
-        
-        % Determine the channel type based on the label
-        if contains(chan_label, {'EEG', 'Fp', 'Fz', 'Cz', 'Pz', 'Oz', 'T7', 'T9', 'T8', 'T10','T3','T5','T4','T6', 'O1','O2', 'F10','F3','F4','F7','F9','F8','C3','C4','P3','P4','P8','P10','P7','P9','A1','A2'}, 'IgnoreCase', true)
-            channel_type = 'EEG';
-        elseif contains(chan_label, {'ECG', 'EKG'}, 'IgnoreCase', true)
-            channel_type = 'ECG';
-        elseif contains(chan_label, {'PPG', 'Pulse'}, 'IgnoreCase', true)
-            channel_type = 'PPG';
-        elseif contains(chan_label, {'EMG'}, 'IgnoreCase', true)
-            channel_type = 'EMG';
-        elseif contains(chan_label, {'EOG'}, 'IgnoreCase', true)
-            channel_type = 'EOG';
-        else
-            % If the label does not match known types, set it as 'Unknown'
-            channel_type = 'Unknown';
-        end
-
-        % Assign the determined type to the channel
-        EEG.chanlocs(chan).type = channel_type;
-
-        % Update the label to include the type
-        EEG.chanlocs(chan).labels = sprintf('%s %s', channel_type, chan_label);
-    end
-    
-    % Define the new file name with "_anonymized" suffix and include folder name
-    output_file = fullfile(file_folder, [folder_name '_' name '.edf']);
-    
-    % Save the anonymized EDF file in the same folder as the original
-    pop_writeeeg(EEG, output_file, 'TYPE', 'EDF');
-    
-    % Get the number of channels and channel labels/types after processing
-    num_channels_after = EEG.nbchan;
-    channel_labels_after = {EEG.chanlocs.labels};
-    channel_types_after = {EEG.chanlocs.type};
-    
-    Save the information after processing in a .txt file
-    info_file_txt_after = fullfile(file_folder, [folder_name '_' name '_after_processing_info.txt']);
-    fileID = fopen(info_file_txt_after, 'w');
-    fprintf(fileID, 'Number of channels (after processing): %d\n', num_channels_after);
-    fprintf(fileID, 'Channel labels and types (after processing):\n');
-    for j = 1:num_channels_after
-        fprintf(fileID, 'Channel %d: %s - %s\n', j, channel_labels_after{j}, channel_types_after{j});
-    end
-    fclose(fileID);
-
-    fprintf('Anonymized and saved: %s\n', output_file);
-    fprintf('Channel info saved in .txt files: %s, %s\n', info_file_txt_before, info_file_txt_after);
+% Verify EEGLAB is in path
+if ~exist('eeglab.m', 'file')
+    error('EEGLAB not found in MATLAB path. Please add EEGLAB first.');
 end
 
-fprintf('All files processed and anonymized.\n');
+% Start EEGLAB (without GUI)
+[ALLEEG, EEG, CURRENTSET] = eeglab;
+
+%% File Processing
+edf_files = dir(fullfile(main_folder, '**', '*.edf'));  % Recursive search
+
+for i = 1:length(edf_files)
+    try
+        %% File Handling
+        current_file = edf_files(i);
+        [filepath, name, ~] = fileparts(current_file.name);
+        [~, folder_name] = fileparts(current_file.folder);
+        
+        fprintf('\nProcessing: %s\n', fullfile(current_file.folder, current_file.name));
+        
+        %% Load Data
+        EEG = pop_biosig(fullfile(current_file.folder, current_file.name));
+        EEG.setname = sprintf('%s_%s', folder_name, name);
+        
+        %% Metadata Handling
+        % Create metadata structure
+        metadata = struct(...
+            'original_file', current_file.name, ...
+            'processing_date', datestr(now), ...
+            'eeglab_version', eeg_getversion());
+        
+        % Save original channel info
+        metadata.original_channels = struct(...
+            'labels', {EEG.chanlocs.labels}, ...
+            'types', {EEG.chanlocs.type});
+        
+        %% Anonymization
+        EEG.subject = 'Anonymous';
+        EEG.comments = 'Anonymized data';
+        EEG.history = [];
+        
+        %% Channel Processing
+        eeg_channel_patterns = {'EEG','Fp','Fz','Cz','Pz','Oz','T','O','C','P','F','A'};
+        
+        for chan = 1:EEG.nbchan
+            chan_label = EEG.chanlocs(chan).labels;
+            
+            % Determine channel type
+            if any(contains(chan_label, eeg_channel_patterns, 'IgnoreCase', true))
+                chan_type = 'EEG';
+            elseif contains(chan_label, {'ECG','EKG'}, 'IgnoreCase', true)
+                chan_type = 'ECG';
+            elseif contains(chan_label, {'EMG'}, 'IgnoreCase', true)
+                chan_type = 'EMG';
+            elseif contains(chan_label, {'EOG'}, 'IgnoreCase', true)
+                chan_type = 'EOG';
+            elseif contains(chan_label, {'PPG','Pulse'}, 'IgnoreCase', true)
+                chan_type = 'PPG';
+            else
+                chan_type = 'OTHER';
+            end
+            
+            % Update channel info
+            EEG.chanlocs(chan).type = chan_type;
+            EEG.chanlocs(chan).labels = sprintf('%s_%s', chan_type, chan_label);
+        end
+        
+        %% Save Results
+        output_basename = fullfile(current_file.folder, [folder_name '_' name]);
+        
+        % 1. Save processed EDF
+        pop_writeeeg(EEG, [output_basename '_processed.edf'], 'TYPE', 'EDF');
+        
+        % 2. Save metadata as JSON
+        metadata.processed_channels = struct(...
+            'labels', {EEG.chanlocs.labels}, ...
+            'types', {EEG.chanlocs.type});
+        
+        json_text = jsonencode(metadata, 'PrettyPrint', true);
+        fid = fopen([output_basename '_metadata.json'], 'w');
+        fprintf(fid, '%s', json_text);
+        fclose(fid);
+        
+        % 3. Save processing report
+        createProcessingReport(EEG, output_basename);
+        
+        fprintf('Successfully processed: %s\n', current_file.name);
+        
+    catch ME
+        warning('Failed to process %s: %s', current_file.name, ME.message);
+        logError(current_file.folder, current_file.name, ME);
+    end
+end
+
+fprintf('\nProcessing complete for %d files.\n', length(edf_files));
+end
+
+%% Helper Functions
+function createProcessingReport(EEG, basepath)
+% Creates a human-readable processing report
+report = {
+    'EEG Data Processing Report'
+    '========================='
+    sprintf('File: %s', EEG.setname)
+    sprintf('Date: %s', datestr(now))
+    sprintf('Channels: %d', EEG.nbchan)
+    ''
+    'Channel Information:'
+    '-------------------'
+    };
+
+for i = 1:EEG.nbchan
+    report{end+1} = sprintf('%02d: %-10s (%-5s)', i, ...
+        EEG.chanlocs(i).labels, EEG.chanlocs(i).type);
+end
+
+% Write to file
+fid = fopen([basepath '_report.txt'], 'w');
+fprintf(fid, '%s\n', report{:});
+fclose(fid);
+end
+
+function logError(folder, filename, error_obj)
+% Logs processing errors
+logfile = fullfile(folder, 'processing_errors.log');
+fid = fopen(logfile, 'a');
+fprintf(fid, '[%s] Error processing %s:\n%s\n\n', ...
+    datestr(now), filename, error_obj.message);
+fclose(fid);
+end
